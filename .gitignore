@@ -1,0 +1,6 @@
+.idea
+.cache
+.vscode
+/bin
+/build
+/target
