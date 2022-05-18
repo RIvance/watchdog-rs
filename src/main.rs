@@ -1,5 +1,5 @@
-extern crate log;
 extern crate clap;
+extern crate log;
 
 use std::fmt::Display;
 use std::fs;
@@ -7,10 +7,10 @@ use std::os::unix::prelude::ExitStatusExt;
 use std::process;
 use std::process::Command;
 use std::process::Stdio;
-use std::sync::mpsc::Receiver;
 use std::sync::mpsc::channel;
-use std::time;
+use std::sync::mpsc::Receiver;
 use std::thread;
+use std::time;
 use std::time::Duration;
 
 use clap::Parser;
@@ -22,11 +22,11 @@ use log::info;
 use log::warn;
 
 trait UnwrapLog<T> {
-    fn unwarp_log(self) -> T;
+    fn unwrap_log(self) -> T;
 }
 
-impl<T, E: Display,> UnwrapLog<T> for Result<T, E> {
-    fn unwarp_log(self) -> T {
+impl<T, E: Display> UnwrapLog<T> for Result<T, E> {
+    fn unwrap_log(self) -> T {
         match self {
             Ok(result) => result,
             Err(err) => {
@@ -44,22 +44,22 @@ async fn start_watchdog(
     let mut command = Command::new(&executable);
 
     while sigterm_recv.try_recv().or::<()>(Ok(true)).unwrap() {
-        
+
         let mut proc = command.args(args);
 
         if let Some(file) = stdin_file.clone() {
-            proc = proc.stdin(Stdio::from(fs::File::open(file).unwarp_log()));
+            proc = proc.stdin(Stdio::from(fs::File::open(file).unwrap_log()));
         }
         if let Some(file) = stdout_file.clone() {
-            proc = proc.stdout(Stdio::from(fs::File::create(file).unwarp_log()));
+            proc = proc.stdout(Stdio::from(fs::File::create(file).unwrap_log()));
         }
         if let Some(file) = stderr_file.clone() {
-            proc = proc.stderr(Stdio::from(fs::File::create(file).unwarp_log()));
+            proc = proc.stderr(Stdio::from(fs::File::create(file).unwrap_log()));
         }
 
-        let mut proc = proc.spawn().unwarp_log();
+        let mut proc = proc.spawn().unwrap_log();
         info!("starting process {} {:?}", executable, args);
-        let exit_status = proc.wait().unwarp_log();
+        let exit_status = proc.wait().unwrap_log();
 
         if exit_status.success() {
             info!("process {} exited normally", proc.id());
@@ -68,34 +68,28 @@ async fn start_watchdog(
         }
 
         match exit_status.code() {
-            Some(exit_code) => warn!(
-                "process {} exited with code {}", 
-                proc.id(), exit_code
-            ),
+            Some(exit_code) => warn!("process {} exited with code {}", proc.id(), exit_code),
             None => {
-                info!("process {} was terminated by signal {}", 
-                    proc.id(), 
-                    exit_status.signal().unwrap()
-                );
+                let signal = exit_status.signal().unwrap();
+                info!("process {} was terminated by signal {}", proc.id(), signal);
                 return;
             }
         }
 
-        if sigterm_recv.try_recv().is_ok() {
-            break; 
+        if sigterm_recv.try_recv().is_err() {
+            break;
+        } else {
+            thread::sleep(restart_delay);
+            info!("restarting after delay");
         }
-
-        thread::sleep(restart_delay);
-        info!("restarting after delay");
     }
 
-    info!("watchdog received SIGTERM, exiting")
+    info!("watchdog received SIGTERM, exiting");
 }
 
 #[derive(Parser)]
 #[clap(version)]
-struct Args 
-{
+struct Args {
     /// Executable file path
     pub executable: String,
 
@@ -115,31 +109,33 @@ struct Args
     #[clap(short = 't', long, default_value = "1000")]
     pub delay: u64,
 
-    /// List of arguments to pass to the executable
-    /// which should be seperated by delimitator "--"
+    /// List of arguments to pass to the executable,
+    /// seperated by delimitator "--"
     pub args: Vec<String>,
 }
 
 fn main() {
+
     let args = Args::parse();
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
     let (sender, receiver) = channel();
 
     ctrlc::set_handler(move || {
-        sender.send(false).unwarp_log();
+        sender.send(false).unwrap_log();
     }).is_err().then(|| {
         error!("unable to set signal handler");
     });
 
     let future = start_watchdog(
-        &args.executable, 
-        &args.args[..], 
+        &args.executable,
+        &args.args[..],
         Duration::from_millis(args.delay),
         receiver,
         args.stdin,
         args.stdout,
         args.stderr,
     );
+
     executor::block_on(future);
 }
